@@ -1,4 +1,7 @@
+#include <math.h>
+#include <stdarg.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/socket.h>
@@ -9,8 +12,16 @@
 /* #include <stddef.h> */
 
 #define PORT 28333
+#define CONTENT_LENGTH_HEADER_LEN 16
 
-void respond_http(int, const char*[], size_t, const char*);
+typedef struct {
+    size_t len;
+    char *headers;
+} HTTPHeaders;
+
+int respond_http(int sd, HTTPHeaders*, ...);
+int create_http_headers(HTTPHeaders*, size_t, ...);
+size_t count_digits_num(int a);
 
 int main(void)
 {
@@ -52,87 +63,113 @@ int main(void)
 
     while (1)
     {
-        printf("%s\n", "start of the loop;");
         int new_sd = accept(sd, (struct sockaddr*)&sd_address, &sd_address_size);
 
-        const char *headers[] = {
-            "HTTP/1.1 200 OK\r\n",
-            "Content-Type: text/plain\r\n",
-        };
+        // response
+        char *body = "Hi, my name is Anton and I want to be a hacker!";
+        uint32_t body_size = strlen(body);
+        uint32_t len = CONTENT_LENGTH_HEADER_LEN+count_digits_num(body_size) + 1;
+        char *content_legth_header = calloc(len, sizeof(char));
+        snprintf(content_legth_header, len, "%s%d", "Content-Length: ", body_size);
 
-        respond_http(
-            new_sd,
-            headers,
-            sizeof(headers)/sizeof(headers[0]),
-            "Hello, World, I am newbie C programmer!"
+        HTTPHeaders headers = {.len=0, .headers=NULL};
+        create_http_headers(
+            &headers, 3,
+            "HTTP/1.1 200 OK",
+            "Content-Type: text/plain",
+            content_legth_header
         );
+        respond_http(new_sd, &headers, body);
+
+        free(content_legth_header);
     }
 
     shutdown(sd, SHUT_RDWR);
 
-
     exit(0);
 }
 
-void respond_http(int sd, const char *headers[], size_t h_len, const char *body)
+size_t count_digits_num(int a)
 {
-    int bf_len = 0;
-    int body_len = 0;
+    return (uint32_t)floor(log10(abs(a))) + 1;
+}
 
-    for (int i=0; i<(int)h_len; i++)
+
+int create_http_headers(HTTPHeaders *hdrs, size_t h_count, ...)
+{
+    if (hdrs->headers != NULL)
     {
-        bf_len += strlen(headers[i]);
+        printf("Headers are already filled!\n");
+        return -1;
     }
 
-    body_len = strlen(body);
-    char content_len_header[24];
-    if (body_len > 0)
+    va_list args1;
+    va_start(args1, h_count);
+    va_list args2;
+    va_copy(args2, args1);
+
+    for (uint32_t i = 0; i < h_count; i++)
     {
-        bf_len += body_len;
-        sprintf(content_len_header, "%s: %d\r\n", "Content-Lenght", body_len);
+        char *h = va_arg(args1, char*);
+        hdrs->len += strlen(h);
     }
+    // clean up args1
+    va_end(args1);
 
+    // count \r\n after each header
+    // + last \r\n
+    // + \0
+    hdrs->len += ((h_count * 2) + 3);
 
-    bf_len += 25;
-    char resp[bf_len];
-    char *curr_pos = resp;
-    size_t remaining = bf_len;
+    hdrs->headers = calloc(hdrs->len, sizeof(char));
+    char *curr_pos = hdrs->headers;
+    uint32_t remaining = hdrs->len;
+    uint32_t written = 0;
 
-    for (int i=0;i<(int)h_len;i++)
+    for (uint32_t i = 0; i < h_count; i++)
     {
-        int written = snprintf(curr_pos, remaining, "%s", headers[i]);
-        if (written < 0 || written > (int)remaining)
+        char *h = va_arg(args2, char*);
+        written = snprintf(curr_pos, remaining, "%s\r\n", h);
+        if (written < 0 || written > remaining)
         {
-            break;
+            printf("Buffer overflow!\n");
+            return -1;
         }
         curr_pos += written;
         remaining -= written;
     }
+    va_end(args2);
 
-    if (body_len > 0 && remaining > 0)
-    {
-        snprintf(curr_pos, remaining, "%s\r\n%s", content_len_header, body);
-    }
-    printf("response size: %lu\n", sizeof(resp));
-    printf("created size: %d\n", bf_len);
+    snprintf(curr_pos, remaining, "%s", "\r\n");
+
+    return 0;
+}
 
 
-    size_t b_sent = 0;
+int respond_http(int sd, HTTPHeaders* headers, ...)
+{
+    va_list args;
+    va_start(args, headers);
+    char *body = va_arg(args, char*);
+    va_end(args);
+
+    uint32_t resp_len = headers->len + strlen(body) + 1;
+    char *response = calloc(resp_len, sizeof(char));
+    snprintf(response, resp_len, "%s%s", headers->headers, body);
+
+    uint32_t bytes_sent = 0;
 
     do {
-        b_sent += send(sd, resp, sizeof(resp), 0);
-        printf("b_sent: %lu\n", b_sent);
+        bytes_sent += send(sd, response, resp_len, 0);
 
-        if (b_sent < 0)
+        if (bytes_sent < 0)
         {
-            perror("Error sending response");
-            break;
+            free(response);
+            printf("Error sending response!\n");
+            return -1;
         }
-        if (b_sent == sizeof(resp))
-        {
-            printf("break");
-            break;
-        }
-    } while (b_sent < bf_len);
-    printf("%s\r", "finish");
+    } while (bytes_sent < resp_len);
+
+    free(response);
+    return 0;
 }
