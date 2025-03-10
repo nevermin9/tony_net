@@ -9,7 +9,8 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/types.h>
-/* #include <stddef.h> */
+#include <arpa/inet.h>
+
 
 #define PORT 28333
 #define CONTENT_LENGTH_HEADER_LEN 16
