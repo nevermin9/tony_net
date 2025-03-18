@@ -59,4 +59,3 @@ int main(int argc, char **argv)
     // finish
     freeaddrinfo(res);
 }
-

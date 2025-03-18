@@ -12,7 +12,6 @@
 #include <sys/types.h>
 #include <arpa/inet.h>
 
-
 #define PORT "28333"
 #define CONTENT_LENGTH_HEADER_LEN 16
 
@@ -75,7 +74,8 @@ int main(void)
     {
         int new_sd = accept(server_info.sd, (struct sockaddr*)&their_addr, &their_addr_len);
 
-        // response
+        printf("Hey, I am going to send response anyway motherfucker!\n");
+        // send response
         char *body = "Hi, my name is Anton and I want to be a hacker!";
         uint32_t body_size = strlen(body);
         uint32_t len = CONTENT_LENGTH_HEADER_LEN+count_digits_num(body_size) + 1;
@@ -242,6 +242,7 @@ int respond_http(int sd, HTTPHeaders* headers, ...)
             return -1;
         }
     } while (bytes_sent < resp_len);
+    printf("Response is sent...\n");
 
     free(response);
     return 0;
