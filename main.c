@@ -5,13 +5,15 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/socket.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <errno.h>
 #include <string.h>
 #include <sys/types.h>
-/* #include <stddef.h> */
+#include <arpa/inet.h>
 
-#define PORT 28333
+
+#define PORT "28333"
 #define CONTENT_LENGTH_HEADER_LEN 16
 
 typedef struct {
@@ -19,51 +21,59 @@ typedef struct {
     char *headers;
 } HTTPHeaders;
 
+typedef struct {
+    int sd;
+    struct sockaddr_in *sd_addr;
+    size_t sd_addrlen;
+} ServerInfo;
+
+int create_socket(ServerInfo*); 
 int respond_http(int sd, HTTPHeaders*, ...);
 int create_http_headers(HTTPHeaders*, size_t, ...);
 size_t count_digits_num(int a);
 
 int main(void)
 {
-    int sd = socket(AF_INET, SOCK_STREAM, 0);
+    int status;
+    struct sockaddr_storage their_addr;
+    socklen_t their_addr_len;
+    char sock_addr_repr[INET6_ADDRSTRLEN];
+    ServerInfo server_info;
 
-    if (sd < 0)
+    status = create_socket(&server_info);
+
+    printf("Server info: \n");
+    inet_ntop(server_info.sd_addr->sin_family, &( server_info.sd_addr->sin_addr ), sock_addr_repr, INET6_ADDRSTRLEN);
+    printf("Address: %s\n", sock_addr_repr);
+    printf("Port: %d\n", ntohs(server_info.sd_addr->sin_port));
+
+    if (status < 0)
     {
-        perror("error creating a socket");
         exit(errno);
     }
 
-    const int y = 1;
-    if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &y, sizeof(y)) < 0)
-    {
-        perror("Error setting option for socket");
-        exit(errno);
-    }
+    status = bind(server_info.sd, (struct sockaddr *)server_info.sd_addr, server_info.sd_addrlen);
 
-    struct sockaddr_in sd_address;
-    socklen_t sd_address_size = sizeof(sd_address);
-
-    memset(&sd_address, 0, sd_address_size);
-    sd_address.sin_family = AF_INET;
-    sd_address.sin_port = htons(PORT);
-    sd_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-
-    if (bind(sd, (struct sockaddr*)&sd_address, sd_address_size) < 0)
+    if (status < 0)
     {
         perror("bind failed");
         exit(errno);
     }
 
-    if (listen(sd, 1) < 0)
+    status = listen(server_info.sd, 20);
+
+    if (status < 0)
     {
         perror("listen failed");
         exit(errno);
     }
-    printf("Listening on port %d...\n", PORT);
 
-    while (1)
+    printf("Listening on port %s...\n", PORT);
+
+    their_addr_len = sizeof(their_addr);
+    for (;;)
     {
-        int new_sd = accept(sd, (struct sockaddr*)&sd_address, &sd_address_size);
+        int new_sd = accept(server_info.sd, (struct sockaddr*)&their_addr, &their_addr_len);
 
         // response
         char *body = "Hi, my name is Anton and I want to be a hacker!";
@@ -84,9 +94,72 @@ int main(void)
         free(content_legth_header);
     }
 
-    shutdown(sd, SHUT_RDWR);
+    shutdown(server_info.sd, SHUT_RDWR);
 
     exit(0);
+}
+
+int create_socket(ServerInfo *server_info)
+{
+    struct addrinfo hints = {
+        /* .ai_family = AF_UNSPEC, */
+        .ai_family = AF_INET,
+        .ai_socktype = SOCK_STREAM,
+        .ai_flags = AI_NUMERICSERV,
+    };
+    struct addrinfo *res, *p;
+    int status;
+
+    status = getaddrinfo(NULL, PORT, &hints, &res);
+
+    if (status != 0)
+    {
+        perror("error getaddrinfo\n");
+        return -1;
+    }
+
+    for (p = res; p != NULL; p = p->ai_next)
+    {
+        if (p->ai_family == AF_INET)
+        {
+            break;
+        }
+    }
+
+
+    if (p == NULL)
+    {
+        perror("failed in creating addrinfo");
+        return -1;
+    }
+
+    int sd = socket(p->ai_family, p->ai_socktype, 0);
+
+    if (sd < 0)
+    {
+        perror("creating the socket\n");
+        return sd;
+    }
+
+    if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0)
+    {
+        perror("error setting socket options");
+        return -1;
+    }
+
+    server_info->sd = sd;
+    server_info->sd_addrlen = p->ai_addrlen;
+
+    server_info->sd_addr = malloc(server_info->sd_addrlen);
+    if (server_info->sd_addr == NULL)
+    {
+        perror("malloc failed\n");
+        return -1;
+    }
+
+    memcpy(server_info->sd_addr, p->ai_addr, server_info->sd_addrlen);
+
+    return 0;
 }
 
 size_t count_digits_num(int a)
